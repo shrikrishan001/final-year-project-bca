@@ -1,1191 +1,803 @@
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useState } from "react";
 import {
   View,
   Text,
   StyleSheet,
-  TouchableOpacity,
   ScrollView,
+  TouchableOpacity,
   ActivityIndicator,
+  StatusBar,
+  RefreshControl,
   Modal,
   Pressable,
 } from "react-native";
-import { router } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
-
+import { router, useFocusEffect } from "expo-router";
 import {
   getFitnessProfile,
   FitnessProfile,
 } from "../utils/fitnessStorage";
+import {
+  logoutUser,
+  getLoggedInUser,
+  UserAccount,
+} from "../utils/authStorage";
 
-import { logoutUser } from "../utils/authStorage";
+const PURPLE = "#5548D9";
+const BG = "#F7F8FC";
+const DARK = "#182235";
+const MUTED = "#858C9C";
+
+type IconName = React.ComponentProps<typeof Ionicons>["name"];
 
 export default function HomeScreen() {
-  const [profile, setProfile] =
-    useState<FitnessProfile | null>(null);
-
+  const [profile, setProfile] = useState<FitnessProfile | null>(null);
+  const [user, setUser] = useState<UserAccount | null>(null);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [drawerVisible, setDrawerVisible] = useState(false);
+  const [loggingOut, setLoggingOut] = useState(false);
 
-  const [greeting, setGreeting] =
-    useState("Good Morning");
+const loadHomeData = useCallback(async () => {
+  try {
+    const fitnessProfile = await getFitnessProfile();
+    const loggedInUser = await getLoggedInUser();
 
-  const [drawerVisible, setDrawerVisible] =
-    useState(false);
+    console.log("Fitness profile name:", fitnessProfile?.name);
+    console.log("Account name:", loggedInUser?.name);
 
-  useEffect(() => {
-    loadProfile();
-    updateGreeting();
+    setProfile(fitnessProfile);
+    setUser(loggedInUser);
+  } catch (error) {
+    console.error("Unable to load home data:", error);
+  } finally {
+    setLoading(false);
+    setRefreshing(false);
+  }
+}, []);
 
-    const timer = setInterval(() => {
-      updateGreeting();
-    }, 60000);
+  useFocusEffect(
+    useCallback(() => {
+      loadHomeData();
+    }, [loadHomeData])
+  );
 
-    return () => clearInterval(timer);
-  }, []);
-
-  // ==========================================
-  // GREETING
-  // ==========================================
-
-  const updateGreeting = () => {
-    const hour = new Date().getHours();
-
-    if (hour >= 5 && hour < 12) {
-      setGreeting("Good Morning");
-    } else if (hour >= 12 && hour < 17) {
-      setGreeting("Good Afternoon");
-    } else if (hour >= 17 && hour < 21) {
-      setGreeting("Good Evening");
-    } else {
-      setGreeting("Good Night");
-    }
+  const onRefresh = () => {
+    setRefreshing(true);
+    loadHomeData();
   };
 
-  // ==========================================
-  // LOAD PROFILE
-  // ==========================================
+  // Fitness Profile name ko account name se priority do.
+  const displayName =
+    profile?.name?.trim() || user?.name?.trim() || "Fitness Enthusiast";
 
-  const loadProfile = async () => {
-    try {
-      const data = await getFitnessProfile();
-      setProfile(data);
-    } catch (error) {
-      console.log("Home profile error:", error);
-    } finally {
-      setLoading(false);
-    }
-  };
+  const firstName = displayName.split(/\s+/)[0];
 
-  // ==========================================
-  // CALORIES
-  // ==========================================
+  const hour = new Date().getHours();
+  const greeting =
+    hour < 12
+      ? "Good morning"
+      : hour < 17
+      ? "Good afternoon"
+      : "Good evening";
 
   const calculateCalories = () => {
-    if (!profile) {
-      return 0;
-    }
+    if (!profile) return null;
 
-    const {
-      age,
-      weight,
-      height,
-      gender,
-      activity,
-      goal,
-    } = profile;
+    const { age, height, weight, gender, activity, goal } = profile;
 
-    let bmr = 0;
+    const bmr =
+      10 * weight +
+      6.25 * height -
+      5 * age +
+      (gender === "male" ? 5 : -161);
 
-    if (gender === "male") {
-      bmr =
-        10 * weight +
-        6.25 * height -
-        5 * age +
-        5;
-    } else {
-      bmr =
-        10 * weight +
-        6.25 * height -
-        5 * age -
-        161;
-    }
+    const multiplier =
+      activity === "low"
+        ? 1.2
+        : activity === "moderate"
+        ? 1.55
+        : 1.725;
 
-    let activityMultiplier = 1.2;
+    const maintenance = bmr * multiplier;
 
-    if (activity === "moderate") {
-      activityMultiplier = 1.55;
-    }
+    const target =
+      goal === "lose"
+        ? maintenance - 400
+        : goal === "gain"
+        ? maintenance + 300
+        : maintenance;
 
-    if (activity === "high") {
-      activityMultiplier = 1.725;
-    }
-
-    let calories =
-      bmr * activityMultiplier;
-
-    if (goal === "lose") {
-      calories -= 400;
-    }
-
-    if (goal === "gain") {
-      calories += 300;
-    }
-
-    return Math.round(calories);
+    return Math.max(0, Math.round(target));
   };
 
-  // ==========================================
-  // GOAL TEXT
-  // ==========================================
+  const calorieTarget = calculateCalories();
 
-  const getGoalText = () => {
-    if (!profile) {
-      return "Fitness";
-    }
-
-    if (profile.goal === "lose") {
-      return "Lose Weight";
-    }
-
-    if (profile.goal === "gain") {
-      return "Build Muscle";
-    }
-
-    return "Maintain Weight";
+  const openRoute = (path: string) => {
+    setDrawerVisible(false);
+    router.push(path as never);
   };
-
-  // ==========================================
-  // ACTIVITY TEXT
-  // ==========================================
-
-  const getActivityText = () => {
-    if (!profile) {
-      return "Fitness";
-    }
-
-    if (profile.activity === "low") {
-      return "Beginner";
-    }
-
-    if (profile.activity === "high") {
-      return "Very Active";
-    }
-
-    return "Moderately Active";
-  };
-
-  // ==========================================
-  // INITIAL
-  // ==========================================
-
-  const getInitial = () => {
-    if (!profile?.name) {
-      return "U";
-    }
-
-    return profile.name
-      .charAt(0)
-      .toUpperCase();
-  };
-
-  // ==========================================
-  // LOGOUT
-  // ==========================================
 
   const handleLogout = async () => {
+    if (loggingOut) return;
+
+    setLoggingOut(true);
     setDrawerVisible(false);
 
     try {
       await logoutUser();
       router.replace("/login");
     } catch (error) {
-      console.log("Logout error:", error);
+      console.error("Logout failed:", error);
+      setLoggingOut(false);
     }
   };
-
-  // ==========================================
-  // DRAWER NAVIGATION
-  // ==========================================
-
-  const navigateFromDrawer = (
-    routeName: string
-  ) => {
-    setDrawerVisible(false);
-
-    setTimeout(() => {
-      router.push(routeName as any);
-    }, 150);
-  };
-
-  // ==========================================
-  // LOADING
-  // ==========================================
 
   if (loading) {
     return (
       <View style={styles.loadingContainer}>
-        <ActivityIndicator
-          size="large"
-          color="#5B5BD6"
-        />
+        <StatusBar barStyle="dark-content" backgroundColor={BG} />
+        <ActivityIndicator size="large" color={PURPLE} />
+        <Text style={styles.loadingText}>Loading your dashboard...</Text>
       </View>
     );
   }
 
-  const dailyCalories =
-    calculateCalories();
-
   return (
     <View style={styles.container}>
-
-      {/* =====================================
-          MAIN CONTENT
-      ===================================== */}
+      <StatusBar barStyle="dark-content" backgroundColor={BG} />
 
       <ScrollView
         showsVerticalScrollIndicator={false}
-        contentContainerStyle={styles.content}
+        contentContainerStyle={styles.scrollContent}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+            tintColor={PURPLE}
+          />
+        }
       >
-
-        {/* =================================
-            HEADER
-        ================================= */}
-
+        {/* Header */}
         <View style={styles.header}>
-
           <TouchableOpacity
             style={styles.menuButton}
-            onPress={() =>
-              setDrawerVisible(true)
-            }
+            onPress={() => setDrawerVisible(true)}
+            accessibilityLabel="Open menu"
           >
-            <Ionicons
-              name="menu"
-              size={25}
-              color="#202A3D"
-            />
+            <Ionicons name="menu-outline" size={27} color={DARK} />
           </TouchableOpacity>
 
-          <View
-            style={styles.headerTextContainer}
-          >
-            <Text style={styles.smallText}>
-              {greeting}
-            </Text>
-
-            <Text style={styles.title}>
-              {profile?.name
-                ? `Ready to get stronger, ${profile.name}?`
-                : "Ready to get stronger?"}
-            </Text>
+          <View style={styles.brandContainer}>
+            <View style={styles.brandIcon}>
+              <Ionicons name="fitness" size={22} color="#FFFFFF" />
+            </View>
+            <View>
+              <Text style={styles.brandTitle}>FitCoach AI</Text>
+              <Text style={styles.brandSubtitle}>YOUR FITNESS PARTNER</Text>
+            </View>
           </View>
 
           <TouchableOpacity
-            style={styles.profileCircle}
-            onPress={() =>
-              router.push(
-                "/fitness-profile" as any
-              )
-            }
+            style={styles.notificationButton}
+            onPress={() => openRoute("/reminders")}
+            accessibilityLabel="Open reminders"
           >
-            <Text style={styles.profileText}>
-              {getInitial()}
-            </Text>
+            <Ionicons
+              name="notifications-outline"
+              size={23}
+              color={DARK}
+            />
           </TouchableOpacity>
-
         </View>
 
-        {/* =================================
-            TODAY ACTIVITY
-        ================================= */}
+        {/* Greeting */}
+        <View style={styles.greetingSection}>
+          <View style={styles.greetingTextContainer}>
+            <Text style={styles.greeting}>{greeting},</Text>
+            <Text style={styles.userName} numberOfLines={1}>
+              {firstName}!
+            </Text>
+            <Text style={styles.greetingDescription}>
+              Ready to make today count?
+            </Text>
+          </View>
 
-        <View style={styles.activityCard}>
+          <View style={styles.avatar}>
+            <Ionicons name="person" size={29} color={PURPLE} />
+          </View>
+        </View>
 
-          <View style={styles.activityHeader}>
-
-            <View>
-              <Text style={styles.cardLabel}>
-                TODAY'S ACTIVITY
-              </Text>
-
-              <Text
-                style={styles.activityTitle}
-              >
-                Keep moving
-              </Text>
+        {/* AI Coach Banner */}
+        <TouchableOpacity
+          style={styles.heroCard}
+          activeOpacity={0.9}
+          onPress={() => openRoute("/coach")}
+        >
+          <View style={styles.heroTopRow}>
+            <View style={styles.aiBadge}>
+              <Ionicons name="sparkles" size={15} color="#FFFFFF" />
+              <Text style={styles.aiBadgeText}>AI PERSONAL COACH</Text>
             </View>
-
             <Ionicons
-              name="flame"
-              size={29}
+              name="arrow-up-outline"
+              size={22}
               color="#FFFFFF"
+              style={{ transform: [{ rotate: "45deg" }] }}
             />
-
           </View>
 
-          <View style={styles.statsRow}>
-
-            <View>
-              <Text style={styles.statValue}>
-                0
-              </Text>
-
-              <Text style={styles.statLabel}>
-                Steps
-              </Text>
-            </View>
-
-            <View>
-              <Text style={styles.statValue}>
-                0.0
-              </Text>
-
-              <Text style={styles.statLabel}>
-                km
-              </Text>
-            </View>
-
-            <View>
-              <Text style={styles.statValue}>
-                0
-              </Text>
-
-              <Text style={styles.statLabel}>
-                Calories
-              </Text>
-            </View>
-
-          </View>
-
-          <Text style={styles.activityNote}>
-            Connect health data to track your
-            real activity
+          <Text style={styles.heroTitle}>
+            Your fitness journey,{"\n"}powered by AI.
+          </Text>
+          <Text style={styles.heroDescription}>
+            Get personalized workouts, nutrition tips and guidance.
           </Text>
 
-        </View>
-
-        {/* =================================
-            DAILY CALORIE TARGET
-        ================================= */}
-
-        <View style={styles.goalCard}>
-
-          <View style={styles.goalIcon}>
-            <Ionicons
-              name="locate-outline"
-              size={25}
-              color="#5B5BD6"
-            />
+          <View style={styles.heroButton}>
+            <Text style={styles.heroButtonText}>Talk to AI Coach</Text>
+            <Ionicons name="arrow-forward" size={17} color={PURPLE} />
           </View>
 
-          <View style={styles.goalContent}>
-
-            <Text style={styles.goalLabel}>
-              DAILY CALORIE TARGET
-            </Text>
-
-            <Text
-              style={styles.goalCalories}
-            >
-              {dailyCalories > 0
-                ? `${dailyCalories} kcal`
-                : "--"}
-            </Text>
-
-            <Text
-              style={styles.goalDescription}
-            >
-              Based on your profile and
-              fitness goal
-            </Text>
-
-          </View>
-
-        </View>
-
-        {/* =================================
-            PROFILE
-        ================================= */}
-
-        {profile && (
-          <>
-            <Text style={styles.sectionTitle}>
-              Your Fitness Profile
-            </Text>
-
-            <View style={styles.profileCard}>
-
-              <View style={styles.profileRow}>
-
-                <View style={styles.profileInfo}>
-                  <Text
-                    style={styles.profileLabel}
-                  >
-                    Goal
-                  </Text>
-
-                  <Text
-                    style={styles.profileValue}
-                  >
-                    {getGoalText()}
-                  </Text>
-                </View>
-
-                <View style={styles.profileInfo}>
-                  <Text
-                    style={styles.profileLabel}
-                  >
-                    Activity
-                  </Text>
-
-                  <Text
-                    style={styles.profileValue}
-                  >
-                    {getActivityText()}
-                  </Text>
-                </View>
-
-              </View>
-
-              <View
-                style={styles.profileDivider}
-              />
-
-              <View style={styles.profileRow}>
-
-                <View style={styles.profileInfo}>
-                  <Text
-                    style={styles.profileLabel}
-                  >
-                    Weight
-                  </Text>
-
-                  <Text
-                    style={styles.profileValue}
-                  >
-                    {profile.weight} kg
-                  </Text>
-                </View>
-
-                <View style={styles.profileInfo}>
-                  <Text
-                    style={styles.profileLabel}
-                  >
-                    Height
-                  </Text>
-
-                  <Text
-                    style={styles.profileValue}
-                  >
-                    {profile.height} cm
-                  </Text>
-                </View>
-
-                <View style={styles.profileInfo}>
-                  <Text
-                    style={styles.profileLabel}
-                  >
-                    Age
-                  </Text>
-
-                  <Text
-                    style={styles.profileValue}
-                  >
-                    {profile.age}
-                  </Text>
-                </View>
-
-              </View>
-
-              <TouchableOpacity
-                style={styles.editButton}
-                onPress={() =>
-                  router.push(
-                    "/fitness-profile" as any
-                  )
-                }
-              >
-                <Text
-                  style={styles.editButtonText}
-                >
-                  Edit Profile
-                </Text>
-              </TouchableOpacity>
-
-            </View>
-          </>
-        )}
-
-        {/* =================================
-            AI COACH
-        ================================= */}
-
-        <Text style={styles.sectionTitle}>
-          AI Coach
-        </Text>
-
-        <TouchableOpacity
-          style={styles.aiCard}
-          onPress={() =>
-            router.push("/coach" as any)
-          }
-        >
-
-          <View style={styles.aiIcon}>
-            <Ionicons
-              name="sparkles"
-              size={24}
-              color="#5B5BD6"
-            />
-          </View>
-
-          <View style={styles.aiContent}>
-
-            <Text style={styles.aiTitle}>
-              Your personal AI Coach
-            </Text>
-
-            <Text
-              style={styles.aiDescription}
-            >
-              Get personalized fitness,
-              workout and nutrition guidance.
-            </Text>
-
-          </View>
-
-          <Ionicons
-            name="chevron-forward"
-            size={21}
-            color="#A0A6B4"
-          />
-
+          <View style={styles.heroDecorationOne} />
+          <View style={styles.heroDecorationTwo} />
         </TouchableOpacity>
 
-        {/* =================================
-            QUICK ACTIONS
-        ================================= */}
+        {/* Daily Overview */}
+        <View style={styles.sectionHeading}>
+          <View>
+            <Text style={styles.sectionTitle}>Daily Overview</Text>
+            <Text style={styles.sectionSubtitle}>
+              Your activity at a glance
+            </Text>
+          </View>
+          <Ionicons name="stats-chart-outline" size={22} color={PURPLE} />
+        </View>
 
-        <Text style={styles.sectionTitle}>
-          Quick Actions
-        </Text>
+        <View style={styles.statsGrid}>
+          <StatCard
+            icon="flame-outline"
+            title="Calories"
+            value="0"
+            unit="kcal"
+            color="#F07842"
+            background="#FFF0E8"
+          />
+          <StatCard
+            icon="footsteps-outline"
+            title="Steps"
+            value="0"
+            unit="steps"
+            color="#2985D7"
+            background="#E9F3FF"
+          />
+          <StatCard
+            icon="water-outline"
+            title="Water"
+            value="0"
+            unit="glasses"
+            color="#219BC4"
+            background="#E5F8FF"
+          />
+          <StatCard
+            icon="time-outline"
+            title="Workout"
+            value="0"
+            unit="minutes"
+            color="#2C9B6F"
+            background="#E7F8EF"
+          />
+        </View>
+
+        {/* Calorie Target */}
+        <View style={styles.calorieCard}>
+          <View style={styles.calorieIcon}>
+            <Ionicons name="nutrition-outline" size={24} color={PURPLE} />
+          </View>
+          <View style={styles.calorieInfo}>
+            <Text style={styles.calorieTitle}>Daily Calorie Target</Text>
+            <Text style={styles.calorieSubtitle}>
+              {profile
+                ? `Based on your ${profile.goal === "lose" ? "weight loss" : profile.goal === "gain" ? "muscle gain" : "maintenance"} goal`
+                : "Complete your fitness profile to personalize your target"}
+            </Text>
+          </View>
+          <View style={styles.calorieValueContainer}>
+            <Text style={styles.calorieValue}>
+              {calorieTarget ?? "--"}
+            </Text>
+            <Text style={styles.calorieUnit}>kcal/day</Text>
+          </View>
+        </View>
+
+        {/* Quick Actions */}
+        <View style={styles.sectionHeading}>
+          <View>
+            <Text style={styles.sectionTitle}>Quick Actions</Text>
+            <Text style={styles.sectionSubtitle}>
+              What would you like to do?
+            </Text>
+          </View>
+        </View>
 
         <View style={styles.actionGrid}>
-
-          <TouchableOpacity
-            style={styles.actionCard}
-            onPress={() =>
-              router.push(
-                "/workout-generator" as any
-              )
-            }
-          >
-
-            <View style={styles.actionIcon}>
-              <Ionicons
-                name="barbell-outline"
-                size={22}
-                color="#5B5BD6"
-              />
-            </View>
-
-            <Text style={styles.actionTitle}>
-              Workout
-            </Text>
-
-            <Text
-              style={styles.actionSubtitle}
-            >
-              Generate a plan
-            </Text>
-
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={styles.actionCard}
-            onPress={() =>
-              router.push(
-                "/meal-analyzer" as any
-              )
-            }
-          >
-            <TouchableOpacity
-  style={styles.actionCard}
-  onPress={() => router.push("/nutrition" as any)}
->
-  <View style={styles.actionIcon}>
-    <Ionicons
-      name="nutrition-outline"
-      size={24}
-      color="#5B5BD6"
-    />
-  </View>
-
-  <Text style={styles.actionTitle}>
-    Nutrition
-  </Text>
-
-  <Text style={styles.actionSubtitle}>
-    Track meals and calories
-  </Text>
-</TouchableOpacity>
-
-            <View style={styles.actionIcon}>
-              <Ionicons
-                name="restaurant-outline"
-                size={22}
-                color="#5B5BD6"
-              />
-            </View>
-
-            <Text style={styles.actionTitle}>
-              Meal Analysis
-            </Text>
-
-            <Text
-              style={styles.actionSubtitle}
-            >
-              Analyze nutrition
-            </Text>
-
-          </TouchableOpacity>
-
+          <ActionCard
+            icon="barbell-outline"
+            title="Workout"
+            description="Generate a workout plan"
+            color="#5548D9"
+            background="#EEECFF"
+            onPress={() => openRoute("/workout-generator")}
+          />
+          <ActionCard
+            icon="restaurant-outline"
+            title="Nutrition"
+            description="Explore healthy meals"
+            color="#2C9B6F"
+            background="#E5F8ED"
+            onPress={() => openRoute("/nutrition")}
+          />
+          <ActionCard
+            icon="scan-outline"
+            title="Meal Analyzer"
+            description="Analyze your food"
+            color="#E28A31"
+            background="#FFF2E3"
+            onPress={() => openRoute("/meal-analyzer")}
+          />
+          <ActionCard
+            icon="analytics-outline"
+            title="Progress"
+            description="Track your progress"
+            color="#248DC5"
+            background="#E5F5FF"
+            onPress={() => openRoute("/progress")}
+          />
         </View>
 
-        {/* =================================
-            PROGRESS
-        ================================= */}
-
-        <TouchableOpacity
-          style={styles.progressCard}
-          onPress={() =>
-            router.push(
-              "/progress" as any
-            )
-          }
-        >
-
-          <View style={styles.progressIcon}>
-            <Ionicons
-              name="stats-chart-outline"
-              size={23}
-              color="#5B5BD6"
-            />
-          </View>
-
-          <View style={styles.progressContent}>
-
-            <Text
-              style={styles.progressTitle}
-            >
-              Progress Dashboard
+        {/* Fitness Profile */}
+        <View style={styles.sectionHeading}>
+          <View>
+            <Text style={styles.sectionTitle}>Your Fitness Profile</Text>
+            <Text style={styles.sectionSubtitle}>
+              Keep your personal details up to date
             </Text>
-
-            <Text
-              style={styles.progressSubtitle}
-            >
-              Track your fitness journey
-            </Text>
-
           </View>
+          <TouchableOpacity
+            onPress={() => openRoute("/fitness-profile")}
+            style={styles.editButton}
+          >
+            <Ionicons name="create-outline" size={17} color={PURPLE} />
+            <Text style={styles.editButtonText}>Edit</Text>
+          </TouchableOpacity>
+        </View>
 
-          <Ionicons
-            name="chevron-forward"
-            size={21}
-            color="#A0A6B4"
+        {profile ? (
+          <View style={styles.profileCard}>
+            <View style={styles.profileTop}>
+              <View style={styles.profileAvatar}>
+                <Ionicons name="person-outline" size={26} color={PURPLE} />
+              </View>
+              <View style={styles.profileNameContainer}>
+                <Text style={styles.profileName} numberOfLines={1}>
+                  {profile.name?.trim() || firstName}
+                </Text>
+                <Text style={styles.profileGoal}>
+                  {profile.goal === "lose"
+                    ? "Weight Loss"
+                    : profile.goal === "gain"
+                    ? "Muscle Gain"
+                    : "Maintain Weight"}
+                </Text>
+              </View>
+              <View style={styles.profileCompleteBadge}>
+                <Ionicons
+                  name="checkmark-circle"
+                  size={16}
+                  color="#249B6B"
+                />
+                <Text style={styles.profileCompleteText}>Saved</Text>
+              </View>
+            </View>
+
+            <View style={styles.profileDivider} />
+
+            <View style={styles.profileMetrics}>
+              <ProfileMetric
+                label="Age"
+                value={`${profile.age}`}
+                unit="years"
+              />
+              <View style={styles.metricDivider} />
+              <ProfileMetric
+                label="Height"
+                value={`${profile.height}`}
+                unit="cm"
+              />
+              <View style={styles.metricDivider} />
+              <ProfileMetric
+                label="Weight"
+                value={`${profile.weight}`}
+                unit="kg"
+              />
+            </View>
+
+            <TouchableOpacity
+              style={styles.viewProfileButton}
+              onPress={() => openRoute("/fitness-profile")}
+            >
+              <Text style={styles.viewProfileText}>Update your details</Text>
+              <Ionicons name="arrow-forward" size={17} color={PURPLE} />
+            </TouchableOpacity>
+          </View>
+        ) : (
+          <TouchableOpacity
+            style={styles.setupProfileCard}
+            onPress={() => openRoute("/fitness-profile")}
+            activeOpacity={0.85}
+          >
+            <View style={styles.setupIcon}>
+              <Ionicons name="person-add-outline" size={25} color={PURPLE} />
+            </View>
+            <View style={styles.setupTextContainer}>
+              <Text style={styles.setupTitle}>Complete your profile</Text>
+              <Text style={styles.setupDescription}>
+                Add your age, height, weight and fitness goal.
+              </Text>
+            </View>
+            <Ionicons name="chevron-forward" size={22} color={PURPLE} />
+          </TouchableOpacity>
+        )}
+
+        {/* Wellness tools */}
+        <View style={styles.sectionHeading}>
+          <View>
+            <Text style={styles.sectionTitle}>Wellness Tools</Text>
+            <Text style={styles.sectionSubtitle}>
+              Small habits, big results
+            </Text>
+          </View>
+        </View>
+
+        <View style={styles.wellnessCard}>
+          <WellnessRow
+            icon="water-outline"
+            title="Water Tracker"
+            subtitle="Stay hydrated throughout the day"
+            onPress={() => openRoute("/water-tracker")}
           />
+          <View style={styles.wellnessDivider} />
+          <WellnessRow
+            icon="timer-outline"
+            title="Workout Timer"
+            subtitle="Keep track of your training time"
+            onPress={() => openRoute("/workout-timer")}
+          />
+          <View style={styles.wellnessDivider} />
+          <WellnessRow
+            icon="calendar-outline"
+            title="Workout Calendar"
+            subtitle="Organize your fitness routine"
+            onPress={() => openRoute("/calender")}
+          />
+        </View>
 
+        <Text style={styles.footerText}>
+          Consistency is progress. Keep showing up for yourself.
+        </Text>
+      </ScrollView>
+
+      {/* Bottom Navigation */}
+      <View style={styles.bottomNav}>
+        <BottomTab
+          icon="home"
+          label="Home"
+          active
+          onPress={() => router.replace("/home")}
+        />
+        <BottomTab
+          icon="compass-outline"
+          label="Explore"
+          onPress={() => openRoute("/coach")}
+        />
+        <BottomTab
+          icon="person-outline"
+          label="Profile"
+          onPress={() => openRoute("/fitness-profile")}
+        />
+      </View>
+
+   {/* Side Drawer */}
+<Modal
+  visible={drawerVisible}
+  transparent
+  animationType="fade"
+  onRequestClose={() => setDrawerVisible(false)}
+>
+  <View style={styles.modalRoot}>
+    <Pressable
+      style={styles.drawerBackdrop}
+      onPress={() => setDrawerVisible(false)}
+    />
+
+    <View style={styles.drawer}>
+      {/* Fixed Header */}
+      <View style={styles.drawerHeader}>
+        <View style={styles.drawerAvatar}>
+          <Ionicons name="person" size={27} color={PURPLE} />
+        </View>
+
+        <View style={styles.drawerUserInfo}>
+          <Text style={styles.drawerName} numberOfLines={1}>
+            {displayName}
+          </Text>
+          <Text style={styles.drawerEmail} numberOfLines={1}>
+            {user?.email || "Your fitness account"}
+          </Text>
+        </View>
+
+        <TouchableOpacity onPress={() => setDrawerVisible(false)}>
+          <Ionicons name="close" size={25} color={DARK} />
         </TouchableOpacity>
+      </View>
 
-        {/* =================================
-            LOGOUT
-        ================================= */}
+      {/* Scrollable Menu */}
+      <ScrollView
+        style={styles.drawerMenuScroll}
+        contentContainerStyle={styles.drawerMenuContent}
+        showsVerticalScrollIndicator={true}
+        keyboardShouldPersistTaps="handled"
+      >
+        <Text style={styles.drawerSectionLabel}>YOUR FITNESS</Text>
 
+        <DrawerItem
+          icon="home-outline"
+          label="Home"
+          onPress={() => openRoute("/home")}
+        />
+        <DrawerItem
+          icon="person-outline"
+          label="Fitness Profile"
+          onPress={() => openRoute("/fitness-profile")}
+        />
+        <DrawerItem
+          icon="barbell-outline"
+          label="Workout Generator"
+          onPress={() => openRoute("/workout-generator")}
+        />
+        <DrawerItem
+          icon="restaurant-outline"
+          label="Nutrition"
+          onPress={() => openRoute("/nutrition")}
+        />
+        <DrawerItem
+          icon="scan-outline"
+          label="Meal Analyzer"
+          onPress={() => openRoute("/meal-analyzer")}
+        />
+        <DrawerItem
+          icon="analytics-outline"
+          label="Progress"
+          onPress={() => openRoute("/progress")}
+        />
+
+        <Text style={styles.drawerSectionLabel}>
+          TRACKERS & TOOLS
+        </Text>
+
+        <DrawerItem
+          icon="water-outline"
+          label="Water Tracker"
+          onPress={() => openRoute("/water-tracker")}
+        />
+        <DrawerItem
+          icon="calendar-outline"
+          label="Workout Calendar"
+          onPress={() => openRoute("/calender")}
+        />
+        <DrawerItem
+          icon="timer-outline"
+          label="Workout Timer"
+          onPress={() => openRoute("/workout-timer")}
+        />
+        <DrawerItem
+          icon="stopwatch-outline"
+          label="Stopwatch"
+          onPress={() => openRoute("/stopwatch")}
+        />
+        <DrawerItem
+          icon="scale-outline"
+          label="Weight Tracker"
+          onPress={() => openRoute("/weigth-tracker")}
+        />
+        <DrawerItem
+          icon="notifications-outline"
+          label="Reminders"
+          onPress={() => openRoute("/reminders")}
+        />
+      </ScrollView>
+
+      {/* Fixed Logout Button */}
+      <View style={styles.drawerBottom}>
         <TouchableOpacity
           style={styles.logoutButton}
           onPress={handleLogout}
+          disabled={loggingOut}
         >
-          <Ionicons
-            name="log-out-outline"
-            size={19}
-            color="#E05252"
-          />
-
-          <Text style={styles.logoutText}>
-            Log Out
-          </Text>
+          {loggingOut ? (
+            <ActivityIndicator color="#D94A4A" />
+          ) : (
+            <>
+              <Ionicons
+                name="log-out-outline"
+                size={21}
+                color="#D94A4A"
+              />
+              <Text style={styles.logoutText}>Log out</Text>
+            </>
+          )}
         </TouchableOpacity>
-
-        {/* =================================
-            BOTTOM NAV
-        ================================= */}
-
-        <View style={styles.bottomNav}>
-
-          <TouchableOpacity
-            style={styles.navItem}
-          >
-            <Ionicons
-              name="home"
-              size={22}
-              color="#5B5BD6"
-            />
-
-            <Text
-              style={styles.navTextActive}
-            >
-              Home
-            </Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={styles.navItem}
-            onPress={() =>
-              router.push("/coach" as any)
-            }
-          >
-            <Ionicons
-              name="sparkles-outline"
-              size={21}
-              color="#9299A8"
-            />
-
-            <Text style={styles.navText}>
-              Explore
-            </Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={styles.navItem}
-            onPress={() =>
-              router.push(
-                "/fitness-profile" as any
-              )
-            }
-          >
-            <Ionicons
-              name="person-outline"
-              size={21}
-              color="#9299A8"
-            />
-
-            <Text style={styles.navText}>
-              Profile
-            </Text>
-          </TouchableOpacity>
-
-        </View>
-
-      </ScrollView>
-
-      {/* =====================================
-          DRAWER
-      ===================================== */}
-
-      <Modal
-        visible={drawerVisible}
-        transparent
-        animationType="fade"
-        onRequestClose={() =>
-          setDrawerVisible(false)
-        }
-      >
-
-        <View style={styles.drawerOverlay}>
-
-          {/* DRAWER */}
-
-          <View style={styles.drawer}>
-
-            <ScrollView
-              showsVerticalScrollIndicator={
-                false
-              }
-              contentContainerStyle={
-                styles.drawerContent
-              }
-            >
-
-              {/* DRAWER HEADER */}
-
-              <View style={styles.drawerHeader}>
-
-                <View
-                  style={styles.drawerBrandIcon}
-                >
-                  <Ionicons
-                    name="flash"
-                    size={24}
-                    color="#FFFFFF"
-                  />
-                </View>
-
-                <View
-                  style={styles.drawerBrandText}
-                >
-                  <Text
-                    style={
-                      styles.drawerBrandTitle
-                    }
-                  >
-                    AI Fitness Coach
-                  </Text>
-
-                  <Text
-                    style={
-                      styles.drawerBrandSubtitle
-                    }
-                  >
-                    Your personal fitness companion
-                  </Text>
-                </View>
-
-                <TouchableOpacity
-                  style={styles.closeButton}
-                  onPress={() =>
-                    setDrawerVisible(false)
-                  }
-                >
-                  <Ionicons
-                    name="close"
-                    size={23}
-                    color="#687083"
-                  />
-                </TouchableOpacity>
-
-              </View>
-
-              {/* USER PROFILE */}
-
-              <TouchableOpacity
-                style={styles.drawerProfile}
-                onPress={() =>
-                  navigateFromDrawer(
-                    "/fitness-profile"
-                  )
-                }
-              >
-
-                <View
-                  style={styles.drawerAvatar}
-                >
-                  <Text
-                    style={
-                      styles.drawerAvatarText
-                    }
-                  >
-                    {getInitial()}
-                  </Text>
-                </View>
-
-                <View
-                  style={styles.drawerUserInfo}
-                >
-                  <Text
-                    style={styles.drawerUserName}
-                  >
-                    {profile?.name ||
-                      "Fitness User"}
-                  </Text>
-
-                  <Text
-                    style={
-                      styles.drawerUserGoal
-                    }
-                  >
-                    {getGoalText()} •{" "}
-                    {getActivityText()}
-                  </Text>
-                </View>
-
-                <Ionicons
-                  name="chevron-forward"
-                  size={20}
-                  color="#A0A6B4"
-                />
-
-              </TouchableOpacity>
-
-              {/* FITNESS */}
-
-              <Text style={styles.drawerSection}>
-                FITNESS
-              </Text>
-
-              <DrawerItem
-                icon="sparkles"
-                title="AI Coach"
-                subtitle="Personal fitness guidance"
-                onPress={() =>
-                  navigateFromDrawer("/coach")
-                }
-              />
-
-              <DrawerItem
-                icon="barbell-outline"
-                title="Workout Plans"
-                subtitle="Generate your workout"
-                onPress={() =>
-                  navigateFromDrawer(
-                    "/workout-generator"
-                  )
-                }
-              />
-
-              <DrawerItem
-                icon="restaurant-outline"
-                title="Meal Analyzer"
-                subtitle="Analyze your nutrition"
-                onPress={() =>
-                  navigateFromDrawer(
-                    "/meal-analyzer"
-                  )
-                }
-              />
-
-              <DrawerItem
-                icon="flame-outline"
-                title="Calorie Calculator"
-                subtitle="Calculate daily calories"
-                onPress={() =>
-                  navigateFromDrawer("/coach")
-                }
-              />
-
-              <DrawerItem
-                icon="stats-chart-outline"
-                title="Progress"
-                subtitle="Track your fitness journey"
-                onPress={() =>
-                  navigateFromDrawer(
-                    "/progress"
-                  )
-                }
-              />
-
-              {/* TRACKING */}
-
-              <Text style={styles.drawerSection}>
-                TRACKING
-              </Text>
-
-              <DrawerItem
-                icon="calendar-outline"
-                title="Calendar"
-                subtitle="Plan and review your days"
-                onPress={() =>
-                  navigateFromDrawer(
-                    "/calendar"
-                  )
-                }
-              />
-
-              <DrawerItem
-                icon="timer-outline"
-                title="Workout Timer"
-                subtitle="Workout and rest timer"
-                onPress={() =>
-                  navigateFromDrawer(
-                    "/workout-timer"
-                  )
-                }
-              />
-
-              <DrawerItem
-                icon="stopwatch-outline"
-                title="Stopwatch"
-                subtitle="Track your workout time"
-                onPress={() =>
-                  navigateFromDrawer(
-                    "/stopwatch"
-                  )
-                }
-              />
-
-              <DrawerItem
-                icon="water-outline"
-                title="Water Tracker"
-                subtitle="Track your daily hydration"
-                onPress={() =>
-                  navigateFromDrawer(
-                    "/water-tracker"
-                  )
-                }
-              />
-
-              <DrawerItem
-                icon="scale-outline"
-                title="Weight Tracker"
-                subtitle="Monitor weight progress"
-                onPress={() =>
-                  navigateFromDrawer(
-                    "/weight-tracker"
-                  )
-                }
-              />
-
-              <DrawerItem
-                icon="footsteps-outline"
-                title="Activity"
-                subtitle="Steps, distance and calories"
-                onPress={() =>
-                  navigateFromDrawer(
-                    "/progress"
-                  )
-                }
-              />
-
-              {/* PLANNING */}
-
-              <Text style={styles.drawerSection}>
-                PLANNING
-              </Text>
-
-              <DrawerItem
-                icon="calendar-number-outline"
-                title="Workout Schedule"
-                subtitle="Plan your weekly workouts"
-                onPress={() =>
-                  navigateFromDrawer(
-                    "/calendar"
-                  )
-                }
-              />
-
-              <DrawerItem
-                icon="notifications-outline"
-                title="Reminders"
-                subtitle="Manage your fitness reminders"
-                onPress={() =>
-                  navigateFromDrawer(
-                    "/reminders"
-                  )
-                }
-              />
-
-              <DrawerItem
-                icon="flag-outline"
-                title="Daily Goals"
-                subtitle="Track your daily targets"
-                onPress={() =>
-                  navigateFromDrawer(
-                    "/progress"
-                  )
-                }
-              />
-
-              {/* APP */}
-
-              <Text style={styles.drawerSection}>
-                APP
-              </Text>
-
-              <DrawerItem
-                icon="trophy-outline"
-                title="Achievements"
-                subtitle="Your fitness milestones"
-                onPress={() =>
-                  navigateFromDrawer(
-                    "/progress"
-                  )
-                }
-              />
-
-              <DrawerItem
-                icon="heart-outline"
-                title="Health Data"
-                subtitle="View your fitness data"
-                onPress={() =>
-                  navigateFromDrawer(
-                    "/progress"
-                  )
-                }
-              />
-
-              <DrawerItem
-                icon="settings-outline"
-                title="Settings"
-                subtitle="Manage your profile"
-                onPress={() =>
-                  navigateFromDrawer(
-                    "/fitness-profile"
-                  )
-                }
-              />
-
-              <DrawerItem
-                icon="help-circle-outline"
-                title="Help & Support"
-                subtitle="Get fitness guidance"
-                onPress={() =>
-                  navigateFromDrawer(
-                    "/coach"
-                  )
-                }
-              />
-
-              {/* LOGOUT */}
-
-              <TouchableOpacity
-                style={styles.drawerLogout}
-                onPress={handleLogout}
-              >
-
-                <View
-                  style={styles.drawerLogoutIcon}
-                >
-                  <Ionicons
-                    name="log-out-outline"
-                    size={20}
-                    color="#D94C4C"
-                  />
-                </View>
-
-                <Text
-                  style={styles.drawerLogoutText}
-                >
-                  Logout
-                </Text>
-
-              </TouchableOpacity>
-
-              <Text style={styles.versionText}>
-                AI Fitness Coach • v1.0
-              </Text>
-
-            </ScrollView>
-
-          </View>
-
-          {/* OUTSIDE DRAWER */}
-
-          <Pressable
-            style={styles.drawerOutside}
-            onPress={() =>
-              setDrawerVisible(false)
-            }
-          />
-
-        </View>
-
-      </Modal>
-
+      </View>
+    </View>
+  </View>
+</Modal>
     </View>
   );
 }
 
-// ==========================================
-// DRAWER ITEM
-// ==========================================
+function StatCard({
+  icon,
+  title,
+  value,
+  unit,
+  color,
+  background,
+}: {
+  icon: IconName;
+  title: string;
+  value: string;
+  unit: string;
+  color: string;
+  background: string;
+}) {
+  return (
+    <View style={styles.statCard}>
+      <View style={[styles.statIcon, { backgroundColor: background }]}>
+        <Ionicons name={icon} size={22} color={color} />
+      </View>
+      <Text style={styles.statTitle}>{title}</Text>
+      <View style={styles.statValueRow}>
+        <Text style={styles.statValue}>{value}</Text>
+        <Text style={styles.statUnit}>{unit}</Text>
+      </View>
+    </View>
+  );
+}
 
-function DrawerItem({
+function ActionCard({
+  icon,
+  title,
+  description,
+  color,
+  background,
+  onPress,
+}: {
+  icon: IconName;
+  title: string;
+  description: string;
+  color: string;
+  background: string;
+  onPress: () => void;
+}) {
+  return (
+    <TouchableOpacity
+      style={styles.actionCard}
+      onPress={onPress}
+      activeOpacity={0.8}
+    >
+      <View style={[styles.actionIcon, { backgroundColor: background }]}>
+        <Ionicons name={icon} size={25} color={color} />
+      </View>
+      <Text style={styles.actionTitle}>{title}</Text>
+      <Text style={styles.actionDescription}>{description}</Text>
+      <View style={styles.actionArrow}>
+        <Ionicons name="arrow-forward" size={17} color={color} />
+      </View>
+    </TouchableOpacity>
+  );
+}
+
+function ProfileMetric({
+  label,
+  value,
+  unit,
+}: {
+  label: string;
+  value: string;
+  unit: string;
+}) {
+  return (
+    <View style={styles.profileMetric}>
+      <Text style={styles.metricLabel}>{label}</Text>
+      <View style={styles.metricValueRow}>
+        <Text style={styles.metricValue}>{value}</Text>
+        <Text style={styles.metricUnit}>{unit}</Text>
+      </View>
+    </View>
+  );
+}
+
+function WellnessRow({
   icon,
   title,
   subtitle,
   onPress,
 }: {
-  icon: string;
+  icon: IconName;
   title: string;
   subtitle: string;
+  onPress: () => void;
+}) {
+  return (
+    <TouchableOpacity
+      style={styles.wellnessRow}
+      onPress={onPress}
+      activeOpacity={0.75}
+    >
+      <View style={styles.wellnessIcon}>
+        <Ionicons name={icon} size={23} color={PURPLE} />
+      </View>
+      <View style={styles.wellnessText}>
+        <Text style={styles.wellnessTitle}>{title}</Text>
+        <Text style={styles.wellnessSubtitle}>{subtitle}</Text>
+      </View>
+      <Ionicons name="chevron-forward" size={19} color="#A2A8B6" />
+    </TouchableOpacity>
+  );
+}
+
+function BottomTab({
+  icon,
+  label,
+  active = false,
+  onPress,
+}: {
+  icon: IconName;
+  label: string;
+  active?: boolean;
+  onPress: () => void;
+}) {
+  return (
+    <TouchableOpacity
+      style={styles.bottomTab}
+      onPress={onPress}
+      activeOpacity={0.75}
+    >
+      <Ionicons
+        name={icon}
+        size={23}
+        color={active ? PURPLE : "#939AAA"}
+      />
+      <Text
+        style={[
+          styles.bottomTabLabel,
+          active && styles.bottomTabLabelActive,
+        ]}
+      >
+        {label}
+      </Text>
+      {active && <View style={styles.activeTabDot} />}
+    </TouchableOpacity>
+  );
+}
+
+function DrawerItem({
+  icon,
+  label,
+  onPress,
+}: {
+  icon: IconName;
+  label: string;
   onPress: () => void;
 }) {
   return (
@@ -1194,666 +806,675 @@ function DrawerItem({
       onPress={onPress}
       activeOpacity={0.75}
     >
-
-      <View style={styles.drawerItemIcon}>
-        <Ionicons
-          name={icon as any}
-          size={21}
-          color="#5B5BD6"
-        />
-      </View>
-
-      <View
-        style={styles.drawerItemContent}
-      >
-        <Text
-          style={styles.drawerItemTitle}
-        >
-          {title}
-        </Text>
-
-        <Text
-          style={styles.drawerItemSubtitle}
-        >
-          {subtitle}
-        </Text>
-      </View>
-
-      <Ionicons
-        name="chevron-forward"
-        size={18}
-        color="#A7ADBA"
-      />
-
+      <Ionicons name={icon} size={21} color="#646D80" />
+      <Text style={styles.drawerItemText}>{label}</Text>
+      <Ionicons name="chevron-forward" size={16} color="#A2A8B6" />
     </TouchableOpacity>
   );
 }
 
-// ==========================================
-// STYLES
-// ==========================================
-
 const styles = StyleSheet.create({
-
   container: {
     flex: 1,
-    backgroundColor: "#F7F8FC",
+    backgroundColor: BG,
   },
-
   loadingContainer: {
     flex: 1,
-    backgroundColor: "#F7F8FC",
-    justifyContent: "center",
+    backgroundColor: BG,
     alignItems: "center",
+    justifyContent: "center",
   },
-
-  content: {
+  loadingText: {
+    marginTop: 12,
+    fontSize: 14,
+    color: MUTED,
+  },
+  scrollContent: {
     paddingHorizontal: 20,
-    paddingTop: 55,
-    paddingBottom: 30,
+    paddingTop: 48,
+    paddingBottom: 25,
   },
-
-  // HEADER
-
   header: {
     flexDirection: "row",
     alignItems: "center",
-    marginBottom: 24,
+    marginBottom: 27,
   },
-
   menuButton: {
-    width: 42,
-    height: 42,
+    width: 43,
+    height: 43,
+    alignItems: "center",
+    justifyContent: "center",
     borderRadius: 14,
-    backgroundColor: "#FFFFFF",
-    justifyContent: "center",
-    alignItems: "center",
-    marginRight: 12,
     borderWidth: 1,
-    borderColor: "#E8E9EF",
+    borderColor: "#E5E7EF",
+    backgroundColor: "#FFFFFF",
+    marginRight: 12,
   },
-
-  headerTextContainer: {
+  brandContainer: {
     flex: 1,
-    paddingRight: 12,
+    flexDirection: "row",
+    alignItems: "center",
   },
-
-  smallText: {
-    fontSize: 14,
-    color: "#7B8292",
-    fontWeight: "600",
-  },
-
-  title: {
-    fontSize: 21,
-    fontWeight: "900",
-    color: "#182235",
-    marginTop: 4,
-  },
-
-  profileCircle: {
-    width: 46,
-    height: 46,
-    borderRadius: 23,
-    backgroundColor: "#5B5BD6",
+  brandIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 13,
+    backgroundColor: PURPLE,
+    alignItems: "center",
     justifyContent: "center",
-    alignItems: "center",
+    marginRight: 10,
   },
-
-  profileText: {
-    color: "#FFFFFF",
-    fontSize: 18,
+  brandTitle: {
+    color: DARK,
+    fontSize: 17,
     fontWeight: "800",
   },
-
-  // ACTIVITY
-
-  activityCard: {
-    backgroundColor: "#5B5BD6",
-    borderRadius: 22,
-    padding: 20,
-    marginBottom: 16,
-  },
-
-  activityHeader: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-  },
-
-  cardLabel: {
-    color: "#DCD9FF",
-    fontSize: 11,
-    fontWeight: "800",
+  brandSubtitle: {
+    color: MUTED,
+    fontSize: 9,
+    fontWeight: "700",
     letterSpacing: 1,
-  },
-
-  activityTitle: {
-    color: "#FFFFFF",
-    fontSize: 20,
-    fontWeight: "800",
-    marginTop: 5,
-  },
-
-  statsRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    marginTop: 25,
-    paddingTop: 18,
-    borderTopWidth: 1,
-    borderTopColor:
-      "rgba(255,255,255,0.2)",
-  },
-
-  statValue: {
-    color: "#FFFFFF",
-    fontSize: 20,
-    fontWeight: "900",
-  },
-
-  statLabel: {
-    color: "#DCD9FF",
-    fontSize: 12,
     marginTop: 3,
   },
-
-  activityNote: {
-    color: "#DCD9FF",
-    fontSize: 10,
-    marginTop: 18,
-    textAlign: "center",
-  },
-
-  // GOAL
-
-  goalCard: {
-    backgroundColor: "#FFFFFF",
-    borderRadius: 18,
-    padding: 16,
-    flexDirection: "row",
-    alignItems: "center",
+  notificationButton: {
+    width: 43,
+    height: 43,
+    borderRadius: 14,
     borderWidth: 1,
-    borderColor: "#E8E9EF",
-    marginBottom: 28,
-  },
-
-  goalIcon: {
-    width: 48,
-    height: 48,
-    borderRadius: 15,
-    backgroundColor: "#EEECFF",
+    borderColor: "#E5E7EF",
+    backgroundColor: "#FFFFFF",
+    alignItems: "center",
     justifyContent: "center",
-    alignItems: "center",
+    marginLeft: 8,
   },
-
-  goalContent: {
-    flex: 1,
-    marginLeft: 13,
-  },
-
-  goalLabel: {
-    fontSize: 10,
-    color: "#7A8293",
-    fontWeight: "800",
-    letterSpacing: 0.8,
-  },
-
-  goalCalories: {
-    fontSize: 20,
-    color: "#202A3D",
-    fontWeight: "900",
-    marginTop: 2,
-  },
-
-  goalDescription: {
-    fontSize: 11,
-    color: "#858C9B",
-    marginTop: 2,
-  },
-
-  // SECTION
-
-  sectionTitle: {
-    fontSize: 19,
-    fontWeight: "900",
-    color: "#182235",
-    marginBottom: 13,
-  },
-
-  // PROFILE
-
-  profileCard: {
-    backgroundColor: "#FFFFFF",
-    borderRadius: 18,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: "#E8E9EF",
-    marginBottom: 28,
-  },
-
-  profileRow: {
+  greetingSection: {
     flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 24,
+  },
+  greetingTextContainer: {
+    flex: 1,
+    paddingRight: 10,
+  },
+  greeting: {
+    fontSize: 16,
+    color: "#747C8E",
+    fontWeight: "500",
+  },
+  userName: {
+    fontSize: 29,
+    color: DARK,
+    fontWeight: "900",
+    marginTop: 2,
+  },
+  greetingDescription: {
+    fontSize: 13,
+    color: MUTED,
+    marginTop: 5,
+  },
+  avatar: {
+    width: 58,
+    height: 58,
+    borderRadius: 20,
+    backgroundColor: "#EEECFF",
+    borderWidth: 1,
+    borderColor: "#DDD9FF",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  heroCard: {
+    backgroundColor: PURPLE,
+    borderRadius: 24,
+    padding: 21,
+    marginBottom: 29,
+    overflow: "hidden",
+  },
+  heroTopRow: {
+    flexDirection: "row",
+    alignItems: "center",
     justifyContent: "space-between",
   },
-
-  profileInfo: {
-    flex: 1,
-  },
-
-  profileLabel: {
-    fontSize: 11,
-    color: "#858C9B",
-  },
-
-  profileValue: {
-    fontSize: 14,
-    color: "#202A3D",
-    fontWeight: "800",
-    marginTop: 4,
-  },
-
-  profileDivider: {
-    height: 1,
-    backgroundColor: "#ECEEF3",
-    marginVertical: 15,
-  },
-
-  editButton: {
-    marginTop: 16,
-    height: 40,
-    borderRadius: 12,
-    backgroundColor: "#F0EFFF",
-    justifyContent: "center",
+  aiBadge: {
+    flexDirection: "row",
     alignItems: "center",
+    alignSelf: "flex-start",
+    backgroundColor: "rgba(255,255,255,0.18)",
+    borderRadius: 20,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    gap: 6,
   },
-
-  editButtonText: {
-    color: "#5B5BD6",
+  aiBadgeText: {
+    color: "#FFFFFF",
+    fontSize: 10,
+    fontWeight: "800",
+    letterSpacing: 0.6,
+  },
+  heroTitle: {
+    color: "#FFFFFF",
+    fontSize: 26,
+    fontWeight: "900",
+    lineHeight: 33,
+    marginTop: 22,
+  },
+  heroDescription: {
+    color: "#E7E4FF",
+    fontSize: 13,
+    lineHeight: 20,
+    marginTop: 9,
+    maxWidth: 270,
+  },
+  heroButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    alignSelf: "flex-start",
+    backgroundColor: "#FFFFFF",
+    borderRadius: 13,
+    paddingHorizontal: 15,
+    paddingVertical: 12,
+    gap: 10,
+    marginTop: 19,
+  },
+  heroButtonText: {
+    color: PURPLE,
     fontSize: 13,
     fontWeight: "800",
   },
-
-  // AI
-
-  aiCard: {
-    backgroundColor: "#FFFFFF",
-    borderRadius: 18,
-    padding: 16,
+  heroDecorationOne: {
+    position: "absolute",
+    width: 130,
+    height: 130,
+    borderRadius: 65,
+    borderWidth: 24,
+    borderColor: "rgba(255,255,255,0.07)",
+    right: -42,
+    bottom: -44,
+  },
+  heroDecorationTwo: {
+    position: "absolute",
+    width: 65,
+    height: 65,
+    borderRadius: 33,
+    backgroundColor: "rgba(255,255,255,0.06)",
+    right: 23,
+    top: 53,
+  },
+  sectionHeading: {
     flexDirection: "row",
     alignItems: "center",
-    borderWidth: 1,
-    borderColor: "#E8E9EF",
-    marginBottom: 28,
+    justifyContent: "space-between",
+    marginBottom: 14,
   },
-
-  aiIcon: {
+  sectionTitle: {
+    fontSize: 19,
+    color: DARK,
+    fontWeight: "900",
+  },
+  sectionSubtitle: {
+    color: MUTED,
+    fontSize: 12,
+    marginTop: 4,
+  },
+  statsGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    justifyContent: "space-between",
+    marginBottom: 22,
+  },
+  statCard: {
+    width: "48.2%",
+    backgroundColor: "#FFFFFF",
+    borderWidth: 1,
+    borderColor: "#E9EBF2",
+    borderRadius: 19,
+    padding: 15,
+    marginBottom: 12,
+  },
+  statIcon: {
+    width: 43,
+    height: 43,
+    borderRadius: 14,
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 12,
+  },
+  statTitle: {
+    fontSize: 12,
+    color: MUTED,
+    fontWeight: "600",
+  },
+  statValueRow: {
+    flexDirection: "row",
+    alignItems: "baseline",
+    gap: 5,
+    marginTop: 6,
+    flexWrap: "wrap",
+  },
+  statValue: {
+    fontSize: 25,
+    color: DARK,
+    fontWeight: "900",
+  },
+  statUnit: {
+    fontSize: 11,
+    color: MUTED,
+  },
+  calorieCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#FFFFFF",
+    borderWidth: 1,
+    borderColor: "#E9EBF2",
+    borderRadius: 19,
+    padding: 15,
+    marginBottom: 29,
+  },
+  calorieIcon: {
+    width: 45,
+    height: 45,
+    borderRadius: 14,
+    backgroundColor: "#EEECFF",
+    alignItems: "center",
+    justifyContent: "center",
+    marginRight: 12,
+  },
+  calorieInfo: {
+    flex: 1,
+    paddingRight: 5,
+  },
+  calorieTitle: {
+    fontSize: 13,
+    fontWeight: "800",
+    color: DARK,
+  },
+  calorieSubtitle: {
+    fontSize: 10,
+    color: MUTED,
+    marginTop: 5,
+    lineHeight: 15,
+  },
+  calorieValueContainer: {
+    alignItems: "flex-end",
+  },
+  calorieValue: {
+    fontSize: 21,
+    color: PURPLE,
+    fontWeight: "900",
+  },
+  calorieUnit: {
+    fontSize: 10,
+    color: MUTED,
+    marginTop: 2,
+  },
+  actionGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    justifyContent: "space-between",
+    marginBottom: 29,
+  },
+  actionCard: {
+    width: "48.2%",
+    backgroundColor: "#FFFFFF",
+    borderWidth: 1,
+    borderColor: "#E9EBF2",
+    borderRadius: 19,
+    padding: 15,
+    marginBottom: 12,
+    minHeight: 177,
+  },
+  actionIcon: {
+    width: 48,
+    height: 48,
+    borderRadius: 15,
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 14,
+  },
+  actionTitle: {
+    fontSize: 14,
+    fontWeight: "900",
+    color: DARK,
+  },
+  actionDescription: {
+    fontSize: 11,
+    color: MUTED,
+    lineHeight: 16,
+    marginTop: 5,
+    paddingRight: 4,
+  },
+  actionArrow: {
+    position: "absolute",
+    right: 13,
+    bottom: 13,
+  },
+  editButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    backgroundColor: "#EEECFF",
+    borderRadius: 10,
+    paddingHorizontal: 11,
+    paddingVertical: 8,
+  },
+  editButtonText: {
+    color: PURPLE,
+    fontSize: 12,
+    fontWeight: "800",
+  },
+  profileCard: {
+    backgroundColor: "#FFFFFF",
+    borderWidth: 1,
+    borderColor: "#E5E7EF",
+    borderRadius: 21,
+    padding: 17,
+    marginBottom: 29,
+  },
+  profileTop: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  profileAvatar: {
+    width: 49,
+    height: 49,
+    borderRadius: 16,
+    backgroundColor: "#EEECFF",
+    alignItems: "center",
+    justifyContent: "center",
+    marginRight: 12,
+  },
+  profileNameContainer: {
+    flex: 1,
+    paddingRight: 5,
+  },
+  profileName: {
+    fontSize: 15,
+    fontWeight: "900",
+    color: DARK,
+  },
+  profileGoal: {
+    fontSize: 12,
+    color: PURPLE,
+    fontWeight: "700",
+    marginTop: 4,
+  },
+  profileCompleteBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    backgroundColor: "#E8F8F0",
+    borderRadius: 10,
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+  },
+  profileCompleteText: {
+    color: "#249B6B",
+    fontSize: 10,
+    fontWeight: "800",
+  },
+  profileDivider: {
+    height: 1,
+    backgroundColor: "#EDF0F5",
+    marginVertical: 17,
+  },
+  profileMetrics: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-around",
+  },
+  profileMetric: {
+    flex: 1,
+    alignItems: "center",
+  },
+  metricLabel: {
+    fontSize: 11,
+    color: MUTED,
+  },
+  metricValueRow: {
+    flexDirection: "row",
+    alignItems: "baseline",
+    gap: 3,
+    marginTop: 6,
+  },
+  metricValue: {
+    fontSize: 19,
+    color: DARK,
+    fontWeight: "900",
+  },
+  metricUnit: {
+    fontSize: 10,
+    color: MUTED,
+  },
+  metricDivider: {
+    width: 1,
+    height: 34,
+    backgroundColor: "#E9EBF2",
+  },
+  viewProfileButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    borderTopWidth: 1,
+    borderTopColor: "#EDF0F5",
+    marginTop: 16,
+    paddingTop: 15,
+  },
+  viewProfileText: {
+    color: PURPLE,
+    fontSize: 12,
+    fontWeight: "800",
+  },
+  setupProfileCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#FFFFFF",
+    borderWidth: 1,
+    borderColor: "#E5E7EF",
+    borderRadius: 19,
+    padding: 16,
+    marginBottom: 29,
+  },
+  setupIcon: {
     width: 48,
     height: 48,
     borderRadius: 15,
     backgroundColor: "#EEECFF",
-    justifyContent: "center",
     alignItems: "center",
+    justifyContent: "center",
+    marginRight: 12,
   },
-
-  aiContent: {
+  setupTextContainer: {
     flex: 1,
-    marginLeft: 13,
+    paddingRight: 8,
   },
-
-  aiTitle: {
-    fontSize: 15,
-    fontWeight: "800",
-    color: "#202A3D",
-  },
-
-  aiDescription: {
-    fontSize: 12,
-    color: "#7A8293",
-    lineHeight: 18,
-    marginTop: 4,
-  },
-
-  // ACTIONS
-
-  actionGrid: {
-    flexDirection: "row",
-    marginBottom: 14,
-  },
-
-  actionCard: {
-    flex: 1,
-    backgroundColor: "#FFFFFF",
-    borderRadius: 18,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: "#E8E9EF",
-    marginHorizontal: 6,
-  },
-
-  actionIcon: {
-    width: 42,
-    height: 42,
-    borderRadius: 13,
-    backgroundColor: "#F0EFFF",
-    justifyContent: "center",
-    alignItems: "center",
-    marginBottom: 12,
-  },
-
-  actionTitle: {
-    fontSize: 15,
-    fontWeight: "800",
-    color: "#202A3D",
-  },
-
-  actionSubtitle: {
-    fontSize: 11,
-    color: "#858C9B",
-    marginTop: 4,
-  },
-
-  // PROGRESS
-
-  progressCard: {
-    backgroundColor: "#FFFFFF",
-    borderRadius: 18,
-    padding: 16,
-    flexDirection: "row",
-    alignItems: "center",
-    borderWidth: 1,
-    borderColor: "#E8E9EF",
-    marginBottom: 14,
-  },
-
-  progressIcon: {
-    width: 45,
-    height: 45,
-    borderRadius: 14,
-    backgroundColor: "#F0EFFF",
-    justifyContent: "center",
-    alignItems: "center",
-  },
-
-  progressContent: {
-    flex: 1,
-    marginLeft: 13,
-  },
-
-  progressTitle: {
-    fontSize: 15,
-    fontWeight: "800",
-    color: "#202A3D",
-  },
-
-  progressSubtitle: {
-    fontSize: 12,
-    color: "#858C9B",
-    marginTop: 4,
-  },
-
-  // LOGOUT
-
-  logoutButton: {
-    height: 46,
-    borderRadius: 14,
-    backgroundColor: "#FFFFFF",
-    borderWidth: 1,
-    borderColor: "#E8E9EF",
-    justifyContent: "center",
-    alignItems: "center",
-    flexDirection: "row",
-    marginBottom: 18,
-  },
-
-  logoutText: {
-    color: "#E05252",
+  setupTitle: {
     fontSize: 14,
-    fontWeight: "800",
-    marginLeft: 7,
+    fontWeight: "900",
+    color: DARK,
   },
-
-  // BOTTOM NAV
-
-  bottomNav: {
-    height: 70,
-    backgroundColor: "#FFFFFF",
-    borderRadius: 20,
-    flexDirection: "row",
-    justifyContent: "space-around",
-    alignItems: "center",
-    borderWidth: 1,
-    borderColor: "#E8E9EF",
+  setupDescription: {
+    fontSize: 11,
+    color: MUTED,
+    lineHeight: 16,
     marginTop: 5,
   },
-
-  navItem: {
+  wellnessCard: {
+    backgroundColor: "#FFFFFF",
+    borderWidth: 1,
+    borderColor: "#E9EBF2",
+    borderRadius: 20,
+    paddingHorizontal: 14,
+    marginBottom: 22,
+  },
+  wellnessRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: 14,
+  },
+  wellnessIcon: {
+    width: 43,
+    height: 43,
+    borderRadius: 14,
+    backgroundColor: "#EEECFF",
     alignItems: "center",
     justifyContent: "center",
+    marginRight: 12,
   },
-
-  navTextActive: {
-    fontSize: 11,
-    color: "#5B5BD6",
+  wellnessText: {
+    flex: 1,
+    paddingRight: 8,
+  },
+  wellnessTitle: {
+    fontSize: 13,
+    color: DARK,
     fontWeight: "800",
-    marginTop: 3,
   },
-
-  navText: {
+  wellnessSubtitle: {
     fontSize: 11,
-    color: "#9299A8",
-    fontWeight: "600",
-    marginTop: 3,
+    color: MUTED,
+    marginTop: 4,
+    lineHeight: 15,
   },
-
-  // DRAWER
-
-  drawerOverlay: {
-    flex: 1,
-    flexDirection: "row",
-    backgroundColor:
-      "rgba(12,18,35,0.48)",
+  wellnessDivider: {
+    height: 1,
+    backgroundColor: "#EDF0F5",
   },
-
-  drawer: {
-    width: "84%",
-    maxWidth: 360,
-    height: "100%",
-    backgroundColor: "#F8F9FC",
-    elevation: 15,
-    shadowColor: "#000",
-    shadowOpacity: 0.18,
-    shadowRadius: 20,
-    shadowOffset: {
-      width: 5,
-      height: 0,
-    },
+  footerText: {
+    color: MUTED,
+    fontSize: 11,
+    textAlign: "center",
+    lineHeight: 17,
+    marginVertical: 8,
   },
-
-  drawerOutside: {
-    flex: 1,
-  },
-
-  drawerContent: {
-    paddingTop: 54,
-    paddingHorizontal: 16,
-    paddingBottom: 30,
-  },
-
-  drawerHeader: {
+  bottomNav: {
     flexDirection: "row",
     alignItems: "center",
-    marginBottom: 18,
+    justifyContent: "space-around",
+    backgroundColor: "#FFFFFF",
+    borderTopWidth: 1,
+    borderTopColor: "#E9EBF2",
+    paddingTop: 10,
+    paddingBottom: 17,
   },
+  bottomTab: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 4,
+  },
+  bottomTabLabel: {
+    fontSize: 10,
+    color: "#939AAA",
+    fontWeight: "600",
+  },
+  bottomTabLabelActive: {
+    color: PURPLE,
+    fontWeight: "900",
+  },
+  activeTabDot: {
+    width: 4,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: PURPLE,
+    marginTop: 1,
+  },
+  modalRoot: {
+    flex: 1,
+    flexDirection: "row",
+  },
+ drawerBackdrop: {
+  ...StyleSheet.absoluteFill,
+  backgroundColor: "rgba(17,24,39,0.45)",
+},
 
-  drawerBrandIcon: {
+drawer: {
+  width: "84%",
+  maxWidth: 340,
+  height: "100%",
+  backgroundColor: "#FFFFFF",
+  paddingTop: 53,
+  paddingHorizontal: 17,
+  paddingBottom: 20,
+},
+
+drawerMenuScroll: {
+  flex: 1,
+  minHeight: 0,
+},
+
+drawerMenuContent: {
+  paddingBottom: 20,
+},
+
+drawerHeader: {
+  flexDirection: "row",
+  alignItems: "center",
+  marginBottom: 25,
+},
+  drawerAvatar: {
     width: 48,
     height: 48,
     borderRadius: 16,
-    backgroundColor: "#5B5BD6",
+    backgroundColor: "#EEECFF",
+    alignItems: "center",
     justifyContent: "center",
-    alignItems: "center",
+    marginRight: 11,
   },
-
-  drawerBrandText: {
-    flex: 1,
-    marginLeft: 12,
-  },
-
-  drawerBrandTitle: {
-    fontSize: 17,
-    fontWeight: "900",
-    color: "#182235",
-  },
-
-  drawerBrandSubtitle: {
-    fontSize: 10,
-    color: "#858C9B",
-    marginTop: 3,
-  },
-
-  closeButton: {
-    width: 36,
-    height: 36,
-    borderRadius: 12,
-    backgroundColor: "#FFFFFF",
-    justifyContent: "center",
-    alignItems: "center",
-    borderWidth: 1,
-    borderColor: "#E8E9EF",
-  },
-
-  // DRAWER PROFILE
-
-  drawerProfile: {
-    backgroundColor: "#FFFFFF",
-    borderRadius: 18,
-    padding: 13,
-    flexDirection: "row",
-    alignItems: "center",
-    borderWidth: 1,
-    borderColor: "#E8E9EF",
-    marginBottom: 20,
-  },
-
-  drawerAvatar: {
-    width: 45,
-    height: 45,
-    borderRadius: 15,
-    backgroundColor: "#5B5BD6",
-    justifyContent: "center",
-    alignItems: "center",
-  },
-
-  drawerAvatarText: {
-    color: "#FFFFFF",
-    fontSize: 18,
-    fontWeight: "900",
-  },
-
   drawerUserInfo: {
     flex: 1,
-    marginLeft: 11,
+    paddingRight: 8,
   },
-
-  drawerUserName: {
-    fontSize: 14,
+  drawerName: {
+    fontSize: 15,
+    color: DARK,
     fontWeight: "900",
-    color: "#202A3D",
   },
-
-  drawerUserGoal: {
-    fontSize: 10,
-    color: "#858C9B",
+  drawerEmail: {
+    fontSize: 11,
+    color: MUTED,
     marginTop: 4,
   },
-
-  // DRAWER SECTION
-
-  drawerSection: {
+  drawerSectionLabel: {
     fontSize: 10,
+    color: "#9AA1B0",
     fontWeight: "900",
-    color: "#939AAA",
-    letterSpacing: 1.2,
-    marginTop: 7,
+    letterSpacing: 1,
+    marginTop: 12,
     marginBottom: 8,
-    paddingLeft: 4,
   },
-
-  // DRAWER ITEM
-
   drawerItem: {
-    minHeight: 62,
-    backgroundColor: "#FFFFFF",
-    borderRadius: 15,
-    marginBottom: 7,
-    paddingHorizontal: 10,
-    paddingVertical: 9,
+    minHeight: 43,
     flexDirection: "row",
     alignItems: "center",
-    borderWidth: 1,
-    borderColor: "#ECEEF3",
-  },
-
-  drawerItemIcon: {
-    width: 42,
-    height: 42,
-    borderRadius: 13,
-    backgroundColor: "#F0EFFF",
-    justifyContent: "center",
-    alignItems: "center",
-  },
-
-  drawerItemContent: {
-    flex: 1,
-    marginLeft: 11,
-  },
-
-  drawerItemTitle: {
-    fontSize: 13,
-    fontWeight: "800",
-    color: "#202A3D",
-  },
-
-  drawerItemSubtitle: {
-    fontSize: 9,
-    color: "#8A91A0",
-    marginTop: 3,
-  },
-
-  // DRAWER LOGOUT
-
-  drawerLogout: {
-    height: 52,
-    backgroundColor: "#FFF4F4",
-    borderRadius: 15,
-    borderWidth: 1,
-    borderColor: "#F6DADA",
-    flexDirection: "row",
-    alignItems: "center",
-    paddingHorizontal: 12,
-    marginTop: 16,
-  },
-
-  drawerLogoutIcon: {
-    width: 36,
-    height: 36,
+    gap: 12,
+    paddingHorizontal: 9,
     borderRadius: 11,
-    backgroundColor: "#FFE7E7",
-    justifyContent: "center",
+  },
+  drawerItemText: {
+    flex: 1,
+    fontSize: 12,
+    color: "#424B5D",
+    fontWeight: "700",
+  },
+  drawerBottom: {
+    // marginTop: "auto",
+    paddingTop: 13,
+    borderTopWidth: 1,
+    borderTopColor: "#EDF0F5",
+  },
+  logoutButton: {
+    minHeight: 45,
+    flexDirection: "row",
     alignItems: "center",
+    gap: 11,
+    paddingHorizontal: 10,
+    borderRadius: 12,
+    backgroundColor: "#FFF1F1",
   },
-
-  drawerLogoutText: {
-    color: "#D94C4C",
+  logoutText: {
     fontSize: 13,
-    fontWeight: "900",
-    marginLeft: 11,
-  },
-
-  versionText: {
-    textAlign: "center",
-    color: "#A0A6B4",
-    fontSize: 9,
-    marginTop: 18,
+    color: "#D94A4A",
+    fontWeight: "800",
   },
 });

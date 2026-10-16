@@ -6,71 +6,150 @@ export type UserAccount = {
   password: string;
 };
 
-const ACCOUNT_KEY = "userAccount";
+const ACCOUNTS_KEY = "userAccounts";
+const LEGACY_ACCOUNT_KEY = "userAccount";
 const SESSION_KEY = "userSession";
+
+const normalizeEmail = (email: string) =>
+  email.trim().toLowerCase();
+
+const readAccounts = async (): Promise<UserAccount[]> => {
+  const saved = await AsyncStorage.getItem(ACCOUNTS_KEY);
+
+  if (saved) {
+    const parsed: unknown = JSON.parse(saved);
+    return Array.isArray(parsed) ? (parsed as UserAccount[]) : [];
+  }
+
+  // Migrate an existing single account, if present.
+  const legacy = await AsyncStorage.getItem(LEGACY_ACCOUNT_KEY);
+
+  if (!legacy) return [];
+
+  try {
+    const account = JSON.parse(legacy) as UserAccount;
+
+    if (account.email && account.password) {
+      const migrated = [{ ...account, email: normalizeEmail(account.email) }];
+      await AsyncStorage.setItem(ACCOUNTS_KEY, JSON.stringify(migrated));
+      await AsyncStorage.removeItem(LEGACY_ACCOUNT_KEY);
+      return migrated;
+    }
+  } catch {
+    // Ignore malformed legacy data.
+  }
+
+  return [];
+};
 
 export const saveUserAccount = async (
   account: UserAccount
 ): Promise<void> => {
+  const email = normalizeEmail(account.email);
+  const accounts = await readAccounts();
+
+  if (accounts.some((item) => normalizeEmail(item.email) === email)) {
+    throw new Error("EMAIL_ALREADY_EXISTS");
+  }
+
+  accounts.push({ ...account, email });
+  await AsyncStorage.setItem(ACCOUNTS_KEY, JSON.stringify(accounts));
+};
+
+export const getUserAccount = async (): Promise<UserAccount | null> => {
   try {
-    await AsyncStorage.setItem(
-      ACCOUNT_KEY,
-      JSON.stringify(account)
-    );
+    const accounts = await readAccounts();
+    return accounts[0] ?? null;
   } catch (error) {
-    console.log("Error saving account:", error);
+    console.error("Error reading accounts:", error);
+    return null;
   }
 };
 
-export const getUserAccount =
-  async (): Promise<UserAccount | null> => {
-    try {
-      const data = await AsyncStorage.getItem(ACCOUNT_KEY);
+export const authenticateUser = async (
+  email: string,
+  password: string
+): Promise<UserAccount | null> => {
+  const accounts = await readAccounts();
+  const normalizedEmail = normalizeEmail(email);
 
-      if (!data) {
-        return null;
-      }
+  return (
+    accounts.find(
+      (account) =>
+        normalizeEmail(account.email) === normalizedEmail &&
+        account.password === password
+    ) ?? null
+  );
+};
 
-      return JSON.parse(data) as UserAccount;
-    } catch (error) {
-      console.log("Error reading account:", error);
-      return null;
-    }
-  };
-
-export const setLoggedIn = async (): Promise<void> => {
-  try {
-    await AsyncStorage.setItem(SESSION_KEY, "true");
-  } catch (error) {
-    console.log("Error creating session:", error);
-  }
+export const setLoggedIn = async (email?: string): Promise<void> => {
+  await AsyncStorage.setItem(
+    SESSION_KEY,
+    JSON.stringify({ email: email ? normalizeEmail(email) : "" })
+  );
 };
 
 export const isLoggedIn = async (): Promise<boolean> => {
   try {
     const session = await AsyncStorage.getItem(SESSION_KEY);
-    return session === "true";
-  } catch (error) {
-    console.log("Error checking session:", error);
+    return session !== null;
+  } catch {
     return false;
   }
 };
 
-export const logoutUser = async (): Promise<void> => {
+export const getLoggedInEmail = async (): Promise<string | null> => {
   try {
-    await AsyncStorage.removeItem(SESSION_KEY);
-  } catch (error) {
-    console.log("Error logging out:", error);
+    const session = await AsyncStorage.getItem(SESSION_KEY);
+    if (!session) return null;
+
+    const parsed = JSON.parse(session);
+    return typeof parsed.email === "string" ? parsed.email : null;
+  } catch {
+    return null;
   }
 };
 
+export const logoutUser = async (): Promise<void> => {
+  await AsyncStorage.removeItem(SESSION_KEY);
+};
+
 export const deleteAccount = async (): Promise<void> => {
+  const email = await getLoggedInEmail();
+
+  if (!email) {
+    await logoutUser();
+    return;
+  }
+
+  const accounts = await readAccounts();
+  const remaining = accounts.filter(
+    (account) => normalizeEmail(account.email) !== normalizeEmail(email)
+  );
+
+  await AsyncStorage.setItem(ACCOUNTS_KEY, JSON.stringify(remaining));
+  await logoutUser();
+};
+
+export const getLoggedInUser = async (): Promise<UserAccount | null> => {
   try {
-    await AsyncStorage.multiRemove([
-      ACCOUNT_KEY,
-      SESSION_KEY,
-    ]);
+    const email = await getLoggedInEmail();
+
+    if (!email) {
+      return null;
+    }
+
+    const accounts = await readAccounts();
+
+    return (
+      accounts.find(
+        (account) =>
+          normalizeEmail(account.email) === normalizeEmail(email)
+      ) ?? null
+    );
   } catch (error) {
-    console.log("Error deleting account:", error);
+    console.error("Error loading logged-in user:", error);
+    return null;
   }
 };
+
